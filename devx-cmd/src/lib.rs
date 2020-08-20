@@ -100,6 +100,9 @@ macro_rules! cmd {
     ($bin:expr $(, $arg:expr )* $(,)?) => {{
         use ::std::{ffi::OsString, convert::Into};
         let mut cmd = $crate::Cmd::new($bin);
+        // I'd do
+        $(cmd.arg($arg);)*
+        // no need for type annotations that way.
         // Type annotation for the case when 0 arguments are passed
         let args: &[OsString] = &[$(Into::<OsString>::into($arg)),*];
         cmd.args(args);
@@ -199,6 +202,7 @@ impl AsRef<[u8]> for BinOrUtf8 {
 /// [`std::process::Command`]: https://doc.rust-lang.org/std/process/struct.Command.html
 #[must_use = "commands are not executed until run(), read() or spawn() is called"]
 #[derive(Clone)]
+// I don't fully understand why we need an Arc here... My gut feeling is that we dont :)
 pub struct Cmd(Arc<CmdShared>);
 
 #[derive(Clone)]
@@ -208,6 +212,7 @@ struct CmdShared {
     stdin: Option<BinOrUtf8>,
     current_dir: Option<PathBuf>,
     echo_cmd: bool,
+    // THe field seems unused?
     echo_err: bool,
 }
 
@@ -221,6 +226,7 @@ impl fmt::Display for Cmd {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", (self.0).bin.display())?;
         for arg in &(self.0).args {
+            // SHould be quoted if arg contains spaces
             write!(f, " {}", arg.to_string_lossy())?;
         }
         if let Some(dir) = &self.0.current_dir {
@@ -262,7 +268,10 @@ impl Cmd {
     ///
     /// [`Cmd::lookup_in_path`]: struct.Cmd.html#method.lookup_in_path
     pub fn try_at(bin_path: impl Into<PathBuf>) -> Option<Self> {
-        let bin: PathBuf = bin_path.into();
+        Self::_try_at(bin_path.into())
+    }
+    // Imroves compile time
+    fn _try_at(bin: PathBuf) -> Option<Self> {
         let with_extension = match env::consts::EXE_EXTENSION {
             "" => None,
             it if bin.extension().is_none() => Some(bin.with_extension(it)),
@@ -320,6 +329,11 @@ impl Cmd {
         self.as_mut().echo_err = yes;
         self
     }
+    // Perhaps just
+    fn stdin(&mut self, stdin: impl Into<BinOrUtf8>) {
+        todo!()
+    }
+    // ?
 
     /// Sets the string input passed to child process's `stdin`.
     /// This overwrites the previous value.
@@ -343,6 +357,8 @@ impl Cmd {
         self
     }
 
+    // Nice!
+    // Might also do the pico-args trick: `.arg("foo").arg(("--bar", "92"))`
     /// Same as `cmd.arg(arg1).arg(arg2)`. This is just a convenient shortcut
     /// mostly used to lexically group related arguments (for example named arguments).
     pub fn arg2(&mut self, arg1: impl Into<OsString>, arg2: impl Into<OsString>) -> &mut Self {
@@ -446,6 +462,8 @@ impl Cmd {
         };
 
         if self.0.echo_cmd {
+            // Yeah.... Not sure how to best deal with redirects.
+            // I'd probably leave as is, for the lack of a better soln.
             eprintln!("{}", child);
         }
 
@@ -465,7 +483,7 @@ impl Cmd {
         self.0
             .bin
             .components()
-            .next()
+            .last() // ?
             .expect("Binary name must not be empty")
             .as_os_str()
             .to_string_lossy()
@@ -486,7 +504,7 @@ impl Cmd {
 /// [`Drop`]: https://doc.rust-lang.org/std/ops/trait.Drop.html
 /// [`std::process::Child`]: https://doc.rust-lang.org/std/process/struct.Child.html
 /// [`std::process::Child::kill`]: https://doc.rust-lang.org/std/process/struct.Child.html#method.kill
-pub struct ChildProcess {
+pub struct ChildProcess { // Or ChildHandle or just Child
     cmd: Cmd,
     child: std::process::Child,
 }
@@ -598,6 +616,8 @@ impl ChildProcess {
         self.wait()?;
 
         if self.cmd.0.echo_cmd {
+            // weird formatting if stdout is multiline, perhaps a
+            // stdout.contains('\n') switch would be useufl?
             eprintln!("[STDOUT {}] {}", self.cmd.bin_name(), &stdout);
         }
         Ok(stdout)
